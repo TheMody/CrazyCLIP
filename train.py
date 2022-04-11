@@ -30,6 +30,7 @@ from torchvision.transforms import Compose, Resize, ToTensor, Normalize
 import matplotlib.pyplot as plt
 #from IPython.display import display
 from einops import rearrange
+from loss import changeloss
 #from google.colab import files
 # import dnnlib
 # import legacy
@@ -146,7 +147,7 @@ def train():
        # image = torch.empty(input_image.size(), dtype = torch.float32, device = device,requires_grad=False) #hier scheint das problem zu seien
         image = input_image * mask
         return image
-    texts = "a dog jumping on a trampoline in the snow"#@param {type:"string"}
+    texts = "a dogs ears on a black background"#@param {type:"string"}
     steps = 10001#@param {type:"number"}
     seed = -1#@param {type:"number"}
      
@@ -174,46 +175,23 @@ def train():
 #     plt.show() 
      
 
-     
-#     initial_batch=4 #actually that will be multiplied by initial_image_steps
-#     initial_image_steps=8
+
 
 
     def run(timestring):
 
-      #with torch.no_grad():
-#         qs = []
-#         losses = []
-#         for _ in range(initial_image_steps):
-# #           a = torch.randn([initial_batch, 512], device=device)*0.6 + w_stds*0.4
-# #           q = ((a-w_all_classes_avg)/w_stds)
-# #           images = G.synthesis((q * w_stds + w_all_classes_avg).unsqueeze(1).repeat([1, G.num_ws, 1]))
-#             
-#             images = input_images.masked_fill(masks, [1,1,1])
-#             embeds = embed_image(images.add(1).div(2))
-#             loss = prompts_dist_loss(embeds, targets, spherical_dist_loss).mean(0)
-#             i = torch.argmin(loss)
-#             qs.append(q[i])
-#             losses.append(loss[i])
-#         qs = torch.stack(qs)
-#         losses = torch.stack(losses)
-#         # print(losses)
-#         # print(losses.shape, qs.shape)
-#         i = torch.argmin(losses)
-#         q = qs[i].unsqueeze(0).requires_grad_()
-#      
-#      
-#       # Sampling loop
-#       q_ema = q
-#       print (q.shape)
+
         torch.manual_seed(seed)
         
-        mask = torch.rand(input_image.size()[1:4],requires_grad=True, device = device)
+        mask = torch.rand(input_image.size()[2:4],requires_grad=True, device = device)
     #    mask = mask.requires_grad_()
     #    with torch.no_grad():
     #    mask = mask.to(device)
         opt = torch.optim.AdamW([mask], lr=0.05, betas=(0.5,0.999))
-        
+  #      l2loss = torch.nn.MSELoss()
+        l2loss = torch.nn.L1Loss()
+        l2_target = torch.zeros(input_image.size(), device = device)
+       # change_loss = 
         loop = tqdm(range(steps))
         for i in loop:
           opt.zero_grad()
@@ -221,15 +199,20 @@ def train():
           # image = G.synthesis((q * w_stds + w_all_classes_avg).unsqueeze(1).repeat([1, G.num_ws, 1]), noise_mode='const')
           image = mask_img(input_image, torch.clamp(mask, min = 0, max = 1))
           embed = embed_image(image.add(1).div(2))
-          loss = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
+          loss1 = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
+          loss2 = l2loss(image,l2_target)
+        #  loss3 = changeloss(image)
+          loss = loss1 + loss2 #+ loss3
           loss.backward()
           opt.step()
         #         loop.set_postfix(loss=loss.item(), q_magnitude=q.std().item())
         #         
         #         q_ema = q_ema * 0.9 + q * 0.1
         #         image = G.synthesis((q_ema * w_stds + w_all_classes_avg).unsqueeze(1).repeat([1, G.num_ws, 1]), noise_mode='const')
-          print(mask)
-          if i % 100 == 0:
+         # print(mask)
+          if i % 30 == 0:
+               with torch.no_grad():
+                    plt.imshow(mask.cpu())
                plt.imshow(TF.to_pil_image(tf(image)[0]))
                plt.show() 
                pil_image = TF.to_pil_image(image[0].add(1).div(2).clamp(0,1))

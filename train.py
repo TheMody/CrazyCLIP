@@ -31,6 +31,8 @@ import matplotlib.pyplot as plt
 #from IPython.display import display
 from einops import rearrange
 from loss import changeloss
+from postprocess import process_mask
+from patching import patch_img
 #from google.colab import files
 # import dnnlib
 # import legacy
@@ -145,9 +147,18 @@ def train():
     def mask_img(input_img, mask):
 
        # image = torch.empty(input_image.size(), dtype = torch.float32, device = device,requires_grad=False) #hier scheint das problem zu seien
-        image = input_image * mask
+       # image = input_image.where(mask[0] > 0.5, torch.zeros(input_image.size()).to(device))
+        image = input_image * mask#[0]
         return image
-    texts = "a dogs ears on a black background"#@param {type:"string"}
+    
+    def mask_img_patches(input_img,patch_img ,patches):
+        zero_img = torch.zeros(input_image.size()).to(device)
+        for patch in patches:
+            patch_img = zero_img.where(patch_img == patch, patch_img)
+        image = input_image.where(patch_img == 0, zero_img)
+        return image
+        
+    texts = "brown hair on a black background"#@param {type:"string"}
     steps = 10001#@param {type:"number"}
     seed = -1#@param {type:"number"}
      
@@ -161,10 +172,15 @@ def train():
         print(f"Your random seed is: {seed}")
      
     texts = [frase.strip() for frase in texts.split("|") if frase]
-     
+    init_steps = 10
     targets = [clip_model.embed_text(text) for text in texts]
      
-    input_image = load_img(path = "Images/dog.jpg") 
+    input_image = load_img(path = "Images/kid.jpg") 
+    input_image = TF.resize(input_image,size = 224)
+    n_patches = 50
+    patches = patch_img(input_image.cpu().detach(), k = n_patches)
+    patches = torch.Tensor(patches).to(device)
+    patches = patches + 1
   #  mask = torch.rand(input_image.size()[2:4], dtype = torch.float16, device = device,requires_grad=True)
 #     plt.imshow(TF.to_pil_image(tf(input_image)[0]))
 #     plt.show()
@@ -175,55 +191,96 @@ def train():
 #     plt.show() 
      
 
-
-
+    def run_withcluster(timestring):
+        torch.manual_seed(seed)
+        minloss = 10000
+        min_patches =[]
+        random_patches = []
+        for i in range(init_steps):
+            random_patches = np.random.randint(50, size = 3)+1 
+            mask_img = mask_img_patches(input_image,patches,random_patches )
+            embed = embed_image(mask_img.add(1).div(2))
+            loss = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
+            
+            if loss < minloss:
+                minloss = loss
+                min_patches = random_patches
+#             plt.imshow(TF.to_pil_image(mask_img[0].add(1).div(2).clamp(0,1)))
+#             plt.show()
+        
+        loop = tqdm(range(steps))
+        prev_loss = minloss
+        for i in loop:
+            prev_random_patches = random_patches
+            if np.random.random() < 0.5:
+               new_patch = np.random.choice(list(range(50))+1 not in random_patches)
+               random_patches.append(new_patch)
+            else:
+               np.delete(random_patches,np.random.choice(range(len(random_patches)))) 
+            mask_img = mask_img_patches(input_image,patches,random_patches )
+            embed = embed_image(mask_img.add(1).div(2))
+            loss = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
+            if loss < prev_loss:
+                random_patches = random_patches
+            else:
+                random_patches = prev_random_patches
+            
+            if i % 10 == 0:
+                with torch.no_grad():
+                     plt.imshow(TF.to_pil_image(mask_img[0].add(1).div(2).clamp(0,1)))
+                     plt.show()
+#                 plt.imshow(TF.to_pil_image(tf(image)[0]))
+#                 plt.show() 
+#                 pil_image = TF.to_pil_image(image[0].add(1).div(2).clamp(0,1))
+#                 os.makedirs(f'samples/{timestring}', exist_ok=True)
+#                 pil_image.save(f'samples/{timestring}/{i:04}.jpg')
+            print(f"Image {i}/{steps} | Current loss: {loss}")
+        return
 
     def run(timestring):
 
 
         torch.manual_seed(seed)
-        
+#         with torch.no_grad():
+#             masknograd = torch.unsqueeze(torch.rand(input_image.size()[2:4],requires_grad=True, device = device),0).expand(2,-1,-1)
+#             masknograd = masknograd.clone()
         mask = torch.rand(input_image.size()[2:4],requires_grad=True, device = device)
-    #    mask = mask.requires_grad_()
-    #    with torch.no_grad():
-    #    mask = mask.to(device)
+    #    mask = masknograd.requires_grad_()
+        print(mask.size())
+        soft = torch.nn.Softmax(dim = 0)
         opt = torch.optim.AdamW([mask], lr=0.05, betas=(0.5,0.999))
   #      l2loss = torch.nn.MSELoss()
         l2loss = torch.nn.L1Loss()
-        l2_target = torch.zeros(input_image.size(), device = device)
+        l2_target = torch.zeros(mask.size(), device = device)
        # change_loss = 
         loop = tqdm(range(steps))
         for i in loop:
-          opt.zero_grad()
-          #w = q * w_stds
-          # image = G.synthesis((q * w_stds + w_all_classes_avg).unsqueeze(1).repeat([1, G.num_ws, 1]), noise_mode='const')
-          image = mask_img(input_image, torch.clamp(mask, min = 0, max = 1))
-          embed = embed_image(image.add(1).div(2))
-          loss1 = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
-          loss2 = l2loss(image,l2_target)
-        #  loss3 = changeloss(image)
-          loss = loss1 + loss2 #+ loss3
-          loss.backward()
-          opt.step()
-        #         loop.set_postfix(loss=loss.item(), q_magnitude=q.std().item())
-        #         
-        #         q_ema = q_ema * 0.9 + q * 0.1
-        #         image = G.synthesis((q_ema * w_stds + w_all_classes_avg).unsqueeze(1).repeat([1, G.num_ws, 1]), noise_mode='const')
-         # print(mask)
-          if i % 30 == 0:
-               with torch.no_grad():
-                    plt.imshow(mask.cpu())
-               plt.imshow(TF.to_pil_image(tf(image)[0]))
-               plt.show() 
-               pil_image = TF.to_pil_image(image[0].add(1).div(2).clamp(0,1))
-               os.makedirs(f'samples/{timestring}', exist_ok=True)
-               pil_image.save(f'samples/{timestring}/{i:04}.jpg')
-          print(f"Image {i}/{steps} | Current loss: {loss}")
+            opt.zero_grad()
+           # softmask = soft(mask)
+            clampedmask = torch.clamp(mask, min = 0, max = 1)
+            image = mask_img(input_image, clampedmask)
+            embed = embed_image(image.add(1).div(2))
+            loss1 = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
+            loss2 = l2loss(mask,l2_target)
+            loss3 = changeloss(torch.unsqueeze(torch.unsqueeze(clampedmask,0),0))
+            loss = loss1 + loss2 +  loss3
+            loss.backward()
+            opt.step()
+            if i % 10 == 0:
+                with torch.no_grad():
+                    process_mask(torch.clamp(mask, min = 0, max = 1).cpu().numpy())
+                #    plt.imshow(mask[1].cpu())
+                plt.imshow(TF.to_pil_image(tf(image)[0]))
+                plt.show() 
+                pil_image = TF.to_pil_image(image[0].add(1).div(2).clamp(0,1))
+                os.makedirs(f'samples/{timestring}', exist_ok=True)
+                pil_image.save(f'samples/{timestring}/{i:04}.jpg')
+            print(f"Image {i}/{steps} | Current loss: {loss}")
          
          
     try:
       timestring = time.strftime('%Y%m%d%H%M%S')
-      run(timestring)
+      run_withcluster(timestring)
     except KeyboardInterrupt:
       pass
        

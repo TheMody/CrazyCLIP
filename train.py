@@ -2,7 +2,6 @@
 # !git clone https://github.com/openai/CLIP
 # !pip install -e ./CLIP
 # !pip install einops ninja
-# !pip install timm
 
 
 import sys
@@ -27,7 +26,7 @@ import matplotlib.pyplot as plt
 
 from loss import changeloss,prompts_dist_loss, spherical_dist_loss
 from postprocess import process_mask
-from patching import patch_img#
+from patching import patch_img
 #from pascal_voc import PASCALVOCTrain
 from Clip import CLIP
 
@@ -40,16 +39,13 @@ def train():
     def load_img(path):
         image = Image.open(path).convert('RGB')
         return TF.to_tensor(image).to(device).unsqueeze(0).requires_grad_()
-    
-
-    
 
         
     texts = "a realistic picture of a kid on a black background"#@param {type:"string"}
     steps = 500#@param {type:"number"}
     seed = -1#@param {type:"number"}
-    init_steps = 10
-    n_patches = 50 
+    init_steps = 20
+    n_patches = 50
 
      
     if seed == -1:
@@ -67,7 +63,7 @@ def train():
 
     def Segment_image(timestring,input_image):
         torch.manual_seed(seed)
-        
+        np.random.seed(seed)
         patches = patch_img(input_image.cpu().detach(), k = n_patches)
         patches = torch.Tensor(patches).to(device)
         patches = patches + 1
@@ -84,7 +80,7 @@ def train():
             return image
         
         for i in range(init_steps):
-            random_patches = (np.random.randint(50, size = 3)+1 ).tolist()
+            random_patches = (np.random.randint(50, size = np.random.randint(4)+2)+1 ).tolist()
             mask_img = mask_img_patches(input_image,patches,random_patches )
             embed = clip_model.embed_image(mask_img.add(1).div(2))
             loss = prompts_dist_loss(embed, targets, spherical_dist_loss).mean()
@@ -92,9 +88,9 @@ def train():
             if loss < minloss:
                 minloss = loss
                 min_patches = random_patches
-#             plt.imshow(TF.to_pil_image(mask_img[0].add(1).div(2).clamp(0,1)))
-#             plt.show()
-        temperature = 1.0
+
+
+        temperature = 0.5
         loop = tqdm(range(steps))
         prev_loss = minloss
         random_patches = min_patches

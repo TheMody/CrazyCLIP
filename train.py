@@ -1,11 +1,9 @@
-
-
+#for setup use:
 # !git clone https://github.com/openai/CLIP
 # !pip install -e ./CLIP
 # !pip install einops ninja
 # !pip install timm
 
-## I'll probably have to trim stuff here
 
 import sys
 #sys.path.append('./stylegan_xl')
@@ -43,60 +41,47 @@ def train():
         image = Image.open(path).convert('RGB')
         return TF.to_tensor(image).to(device).unsqueeze(0).requires_grad_()
     
-    def mask_img(input_img, mask):
 
-       # image = torch.empty(input_image.size(), dtype = torch.float32, device = device,requires_grad=False) #hier scheint das problem zu seien
-       # image = input_image.where(mask[0] > 0.5, torch.zeros(input_image.size()).to(device))
-        image = input_image * mask#[0]
-        return image
     
-    def mask_img_patches(input_img,patch_img ,patches):
-        zero_img = torch.zeros(input_image.size()).to(device)
-        for patch in patches:
-            patch_img = zero_img.where(patch_img == patch, patch_img)
-        image = input_image.where(patch_img == 0, zero_img)
-        return image
+
         
     texts = "a realistic picture of a kid on a black background"#@param {type:"string"}
     steps = 500#@param {type:"number"}
     seed = -1#@param {type:"number"}
-     
-    tf = Compose([
-      Resize(224),
-      lambda x: torch.clamp((x+1)/2,min=0,max=1),
-    ])
+    init_steps = 10
+    n_patches = 50 
+
      
     if seed == -1:
-        seed = np.random.randint(0,9e9)
-        print(f"Your random seed is: {seed}")
+        seed = np.random.randint(0,9e7)
+        print(f"Your random seed is: {seed}")#
+        
+        
     clip_model = CLIP()
     texts = [frase.strip() for frase in texts.split("|") if frase]
-    init_steps = 10
     targets = [clip_model.embed_text(text) for text in texts]
      
-
-    
     input_image = load_img(path = "Images/kid.jpg") 
     input_image = TF.resize(input_image,size = 224)
-    n_patches = 50
-    patches = patch_img(input_image.cpu().detach(), k = n_patches)
-    patches = torch.Tensor(patches).to(device)
-    patches = patches + 1
-  #  mask = torch.rand(input_image.size()[2:4], dtype = torch.float16, device = device,requires_grad=True)
-#     plt.imshow(TF.to_pil_image(tf(input_image)[0]))
-#     plt.show()
-#     print(mask.size())
-#     print(input_image.size())
-#     image = mask_img(input_image, mask > 0)
-#     plt.imshow(TF.to_pil_image(tf(image)[0]))
-#     plt.show() 
      
 
-    def Segment_image(timestring):
+    def Segment_image(timestring,input_image):
         torch.manual_seed(seed)
+        
+        patches = patch_img(input_image.cpu().detach(), k = n_patches)
+        patches = torch.Tensor(patches).to(device)
+        patches = patches + 1
+        
         minloss = 10000
         min_patches =[]
         random_patches = []
+        
+        def mask_img_patches(input_img,patch_img ,patches):
+            zero_img = torch.zeros(input_image.size()).to(device)
+            for patch in patches:
+                patch_img = zero_img.where(patch_img == patch, patch_img)
+            image = input_image.where(patch_img == 0, zero_img)
+            return image
         
         for i in range(init_steps):
             random_patches = (np.random.randint(50, size = 3)+1 ).tolist()
@@ -162,6 +147,13 @@ def train():
 
 
         torch.manual_seed(seed)
+        
+        def mask_img(input_img, mask):
+
+           # image = torch.empty(input_image.size(), dtype = torch.float32, device = device,requires_grad=False) #hier scheint das problem zu seien
+           # image = input_image.where(mask[0] > 0.5, torch.zeros(input_image.size()).to(device))
+            image = input_image * mask#[0]
+            return image
 #         with torch.no_grad():
 #             masknograd = torch.unsqueeze(torch.rand(input_image.size()[2:4],requires_grad=True, device = device),0).expand(2,-1,-1)
 #             masknograd = masknograd.clone()
@@ -191,7 +183,7 @@ def train():
                 with torch.no_grad():
                     process_mask(torch.clamp(mask, min = 0, max = 1).cpu().numpy())
                 #    plt.imshow(mask[1].cpu())
-                plt.imshow(TF.to_pil_image(tf(image)[0]))
+                plt.imshow(TF.to_pil_image(image[0]))
                 plt.show() 
                 pil_image = TF.to_pil_image(image[0].add(1).div(2).clamp(0,1))
                 os.makedirs(f'samples/{timestring}', exist_ok=True)
@@ -201,7 +193,7 @@ def train():
          
     try:
       timestring = time.strftime('%Y%m%d%H%M%S')
-      Segment_image(timestring)
+      Segment_image(timestring,input_image)
     except KeyboardInterrupt:
       pass
        

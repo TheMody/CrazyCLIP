@@ -5,7 +5,7 @@ import configparser
 from logger import Logger
 import shutil
 import sys
-from train import train 
+from train import test 
 
 def main():
     parser = argparse.ArgumentParser(
@@ -30,7 +30,7 @@ def main():
             shutil.copy2(file, config["DEFAULT"]["directory"] )
             
     sys.stdout = Logger(open(config["DEFAULT"]["directory"] +"/SysOut.txt","w"))
-    train()
+    test()
     
 if __name__ == '__main__':
     main()
